@@ -1,0 +1,15 @@
+{
+  "data": [
+    {
+      "mal_id": 0,
+      "title": "Fallback Anime",
+      "title_english": "Fallback Anime",
+      "images": {"jpg": {"large_image_url": "https://via.placeholder.com/300x450.png?text=Fallback+Anime"}},
+      "synopsis": "This is fallback data used when all external providers fail.",
+      "episodes": 12,
+      "score": 8.5,
+      "year": 2023,
+      "trailer": {"images": {"maximum_image_url": ""}}
+    }
+  ]
+}

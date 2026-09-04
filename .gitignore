@@ -1,0 +1,8 @@
+node_modules/
+.env
+data/
+downloads/
+hls/
+cdn/
+.DS_Store
+*.log
