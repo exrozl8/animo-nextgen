@@ -1763,10 +1763,20 @@
           </div>
 
           <!-- Player Bottom Banner Ad Slot (728x90 / responsive) -->
-          <div class="ad-slot-box" id="ad-player-bottom">
-            <div class="ad-label">Sponsored</div>
+          <div class="ad-slot-box" id="ad-player-bottom" style="padding: 10px; background: linear-gradient(135deg, rgba(235, 94, 40, 0.08), rgba(0,0,0,0.3)); border: 1px solid rgba(235, 94, 40, 0.3);">
+            <div class="ad-label" style="color: var(--accent); display:flex; justify-content:space-between; align-items:center;">
+              <span>Sponsored • Recommended Partner</span>
+              <span style="font-size:8.5px;opacity:0.8;">Ads help keep Animo free</span>
+            </div>
             <div id="ad-player-bottom-content">
-              <div class="ad-placeholder-text">⚡ Support Animo — Adsterra / PropellerAds Banner Placement (728×90)</div>
+              <a href="https://www.profitableratecpmnetwork.com/gy6z5ra6z?key=1d1f1a1f045675134b1a715cbe4d6229" target="_blank" rel="noopener noreferrer" style="text-decoration:none; display:flex; align-items:center; justify-content:center; gap:12px; padding:12px; border-radius:8px; background:rgba(255,255,255,0.03); border:1px dashed rgba(255,255,255,0.15); transition:all .2s; color:#fff;">
+                <span style="font-size:20px;">⚡</span>
+                <div style="text-align:left;">
+                  <div style="font-weight:700; font-size:13px; color:var(--accent);">Stream Faster & Ad-Free with Premium Cloud Servers</div>
+                  <div style="font-size:11px; opacity:0.75;">Click here to unlock ultra high-speed 4K/1080p anime streaming routes</div>
+                </div>
+                <span style="margin-left:auto; background:var(--accent); color:#fff; font-size:11px; font-weight:700; padding:6px 12px; border-radius:6px;">Check Out →</span>
+              </a>
             </div>
           </div>
         </div>
@@ -1782,10 +1792,15 @@
           <div class="ep-grid" id="ep-grid"></div>
 
           <!-- Sidebar Native/Square Ad Slot (300x250) -->
-          <div class="ad-slot-box ad-side-slot" id="ad-sidebar">
-            <div class="ad-label">Sponsored</div>
+          <div class="ad-slot-box ad-side-slot" id="ad-sidebar" style="background: linear-gradient(180deg, rgba(235,94,40,0.06), rgba(0,0,0,0.4)); border:1px solid rgba(235,94,40,0.25);">
+            <div class="ad-label" style="color:var(--accent);">Sponsored</div>
             <div id="ad-sidebar-content">
-              <div class="ad-placeholder-text">📢 Native Sponsor Slot (300×250)</div>
+              <a href="https://www.profitableratecpmnetwork.com/gy6z5ra6z?key=1d1f1a1f045675134b1a715cbe4d6229" target="_blank" rel="noopener noreferrer" style="text-decoration:none; display:flex; flex-direction:column; align-items:center; text-align:center; gap:8px; padding:12px; border-radius:8px; background:rgba(255,255,255,0.03); color:#fff;">
+                <div style="font-size:24px;">🎮 🔥</div>
+                <div style="font-weight:700; font-size:12.5px; color:var(--accent);">Recommended For You</div>
+                <div style="font-size:11px; opacity:0.75; line-height:1.4;">Trending games, anime gifts & special deals tailored for anime fans.</div>
+                <div style="margin-top:4px; width:100%; background:var(--accent); color:#fff; font-size:11px; font-weight:700; padding:6px 0; border-radius:6px;">Explore Now</div>
+              </a>
             </div>
           </div>
         </div>
@@ -1797,6 +1812,33 @@
 
   <!-- ══════════════════════════════════ SCRIPTS -->
   <script>
+    /* ═══════════════════════════════════════════ ADSTERRA DIRECT LINK POPUNDER */
+    (function initDirectLinkPopunder() {
+      const DIRECT_LINK = 'https://www.profitableratecpmnetwork.com/gy6z5ra6z?key=1d1f1a1f045675134b1a715cbe4d6229';
+      const COOLDOWN_MINUTES = 15; // Trigger at most once every 15 minutes per visitor
+
+      function canTriggerAd() {
+        const lastAd = localStorage.getItem('animo_last_ad_time');
+        if (!lastAd) return true;
+        const diff = (Date.now() - parseInt(lastAd, 10)) / (1000 * 60);
+        return diff >= COOLDOWN_MINUTES;
+      }
+
+      function handleFirstInteraction(e) {
+        // Don't trigger if user clicked directly on our designated ad banners or an existing link/input
+        if (e.target.closest('#ad-player-bottom') || e.target.closest('#ad-sidebar')) return;
+
+        if (canTriggerAd()) {
+          localStorage.setItem('animo_last_ad_time', Date.now().toString());
+          // Open direct link in background tab
+          window.open(DIRECT_LINK, '_blank');
+        }
+      }
+
+      // Listen for first interaction (click anywhere)
+      window.addEventListener('click', handleFirstInteraction, { passive: true });
+    })();
+
     /* ═══════════════════════════════════════════ STATE */
     let currentAnime = null;
     let currentEp = 1;
