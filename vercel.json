@@ -1,15 +1,13 @@
 {
-  "version": 2,
-  "builds": [
+  "rewrites": [
     {
-      "src": "server.js",
-      "use": "@vercel/node"
+      "source": "/(.*)",
+      "destination": "/server.js"
     }
   ],
-  "routes": [
-    {
-      "src": "/(.*)",
-      "dest": "server.js"
+  "functions": {
+    "server.js": {
+      "includeFiles": "node_modules/sql.js/dist/sql-wasm.wasm"
     }
-  ]
+  }
 }

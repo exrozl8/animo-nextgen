@@ -6,3 +6,5 @@ hls/
 cdn/
 .DS_Store
 *.log
+data-test/
+

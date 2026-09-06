@@ -81,7 +81,19 @@ export const config = {
   },
 };
 
-fs.mkdirSync(path.dirname(config.db.file), { recursive: true });
-fs.mkdirSync(config.download.dir, { recursive: true });
-fs.mkdirSync(config.transcode.outputDir, { recursive: true });
-fs.mkdirSync(config.upload.localRoot, { recursive: true });
+function safeMkdir(dirPath) {
+  try {
+    fs.mkdirSync(dirPath, { recursive: true });
+  } catch (err) {
+    // Ignore read-only filesystem errors in serverless environments (e.g. Vercel, AWS Lambda)
+    if (err.code !== 'EROFS' && err.code !== 'EACCES' && err.code !== 'ENOENT') {
+      console.warn(`[config] Note: could not create dir ${dirPath}: ${err.message}`);
+    }
+  }
+}
+
+safeMkdir(path.dirname(config.db.file));
+safeMkdir(config.download.dir);
+safeMkdir(config.transcode.outputDir);
+safeMkdir(config.upload.localRoot);
+

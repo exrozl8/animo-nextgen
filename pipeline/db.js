@@ -12,49 +12,79 @@ function int(val) {
   return n;
 }
 
+import { createRequire } from 'module';
+const require = createRequire(import.meta.url);
+
+function findWasmPath() {
+  try {
+    const p = require.resolve('sql.js/dist/sql-wasm.wasm');
+    if (fs.existsSync(p)) return p;
+  } catch {}
+  const candidate = path.join(process.cwd(), 'node_modules', 'sql.js', 'dist', 'sql-wasm.wasm');
+  if (fs.existsSync(candidate)) return candidate;
+  return null;
+}
+
 export async function initDb() {
-  SQL = await initSqlJs({
-    locateFile: (file) => path.join(import.meta.dirname, '..', 'node_modules', 'sql.js', 'dist', file),
-  });
+  try {
+    // Prevent fatal Emscripten crashes in Vercel/serverless environments.
+    // sql.js will forcefully abort the Node process if it cannot find its WASM file, bypassing try/catch.
+    if (process.env.VERCEL || process.env.AWS_EXECUTION_ENV) {
+      console.warn('[db] Running in serverless mode (Vercel/AWS). SQLite is disabled.');
+      return null;
+    }
 
-  let buf;
-  if (fs.existsSync(config.db.file)) {
-    buf = fs.readFileSync(config.db.file);
+    const wasmPath = findWasmPath();
+    const opts = wasmPath ? { locateFile: () => wasmPath } : {};
+    SQL = await initSqlJs(opts);
+
+    let buf;
+    if (fs.existsSync(config.db.file)) {
+      try {
+        buf = fs.readFileSync(config.db.file);
+      } catch {}
+    }
+    db = new SQL.Database(buf);
+
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS episodes (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        anime_id INTEGER NOT NULL,
+        anilist_id INTEGER,
+        episode INTEGER NOT NULL,
+        version INTEGER DEFAULT 1,
+        title TEXT,
+        stream_url TEXT NOT NULL,
+        resolution TEXT,
+        codecs TEXT,
+        group_name TEXT,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+      );
+      CREATE INDEX IF NOT EXISTS idx_ep_anime ON episodes(anime_id, episode, version);
+      CREATE INDEX IF NOT EXISTS idx_ep_anilist ON episodes(anilist_id, episode);
+    `);
+
+    return { db, SQL };
+  } catch (err) {
+    console.warn(`[db] Note: SQLite database disabled (${err.message}). Pipelines will run without local DB.`);
+    return null;
   }
-  db = new SQL.Database(buf);
-
-  db.exec(`
-    CREATE TABLE IF NOT EXISTS episodes (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      anime_id INTEGER NOT NULL,
-      anilist_id INTEGER,
-      episode INTEGER NOT NULL,
-      version INTEGER DEFAULT 1,
-      title TEXT,
-      stream_url TEXT NOT NULL,
-      resolution TEXT,
-      codecs TEXT,
-      group_name TEXT,
-      created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-    );
-    CREATE INDEX IF NOT EXISTS idx_ep_anime ON episodes(anime_id, episode, version);
-    CREATE INDEX IF NOT EXISTS idx_ep_anilist ON episodes(anilist_id, episode);
-  `);
-
-  return { db, SQL };
 }
 
 export function saveDb() {
-  if (!db) throw new Error('db not initialised');
-  const data = db.export();
-  const dir = path.dirname(config.db.file);
-  fs.mkdirSync(dir, { recursive: true });
-  fs.writeFileSync(config.db.file, Buffer.from(data));
+  if (!db) return;
+  try {
+    const data = db.export();
+    const dir = path.dirname(config.db.file);
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(config.db.file, Buffer.from(data));
+  } catch (err) {
+    console.warn(`[db] Note: could not persist database to disk: ${err.message}`);
+  }
 }
 
 export function getDb() {
-  if (!db) throw new Error('db not initialised');
-  return db;
+  return db || null;
 }
 
 export function getSQL() {
@@ -64,6 +94,7 @@ export function getSQL() {
 
 export function insertEpisode(record) {
   const d = getDb();
+  if (!d) return null;
   const stmt = d.prepare(`
     INSERT INTO episodes
       (anime_id, anilist_id, episode, version, title, stream_url, resolution, codecs, group_name)
@@ -95,6 +126,7 @@ export function getEpisode(malId, episode, version = null) {
   const id = int(malId);
   const ep = int(episode);
   const d = getDb();
+  if (!d) return null;
   const sql = version
     ? `SELECT * FROM episodes WHERE anime_id = ${id} AND episode = ${ep} AND version = ${int(version)} ORDER BY created_at DESC LIMIT 1`
     : `SELECT * FROM episodes WHERE anime_id = ${id} AND episode = ${ep} ORDER BY version DESC, created_at DESC LIMIT 1`;
@@ -107,6 +139,7 @@ export function getEpisode(malId, episode, version = null) {
 export function listEpisodes(malId) {
   const id = int(malId);
   const d = getDb();
+  if (!d) return [];
   const rows = d.exec(`SELECT * FROM episodes WHERE anime_id = ${id} ORDER BY episode ASC, version DESC, created_at DESC`);
   if (!rows.length) return [];
   const cols = rows[0].columns;
