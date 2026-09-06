@@ -278,8 +278,8 @@ app.get('/api/stream', async (req, res) => {
   const { mal_id, anilist_id, ep, mode, title } = req.query;
   const epNum = parseInt(ep, 10) || 1;
   const audioMode = (mode === 'dub') ? 'dub' : 'sub';
-  const mId   = parseInt(mal_id, 10)    || null;
-  let   aId   = parseInt(anilist_id, 10)|| null;
+  const mId = parseInt(mal_id, 10) || null;
+  let aId = parseInt(anilist_id, 10) || null;
 
   if (!aId && mId) {
     aId = await resolveAnilistId(mId);
@@ -298,85 +298,58 @@ app.get('/api/stream', async (req, res) => {
   const seenUrls = new Set();
   const makeProxy = (rawUrl) => `/api/embed-proxy?url=${encodeURIComponent(rawUrl)}`;
 
-  // 1. Direct HLS & clean streams from multiple providers
+  // 1. Direct Embed Servers (Instant, Zero Server Bandwidth, 100% Ban-Proof)
   if (aId) {
-    const providerResults = await fetchProviderStreams(aId, epNum, audioMode);
-    for (const resItem of providerResults) {
-      for (const s of resItem.streams) {
-        if (!s.url || seenUrls.has(s.url)) continue;
-        // Skip VidWish if known to 403 on this CDN
-        if (s.server && s.server.toLowerCase().includes('vidwish')) continue;
+    sources.push({
+      name: 'VidSrc HD',
+      provider: 'vidsrc',
+      type: 'embed',
+      url: makeProxy(`https://vidsrc.pm/embed/anime?anilist=${aId}&episode=${epNum}`),
+      directUrl: `https://vidsrc.pm/embed/anime?anilist=${aId}&episode=${epNum}`
+    });
+    sources.push({
+      name: '2Embed Prime',
+      provider: '2embed',
+      type: 'embed',
+      url: makeProxy(`https://2embed.cc/embed/anime/${aId}/${epNum}`),
+      directUrl: `https://2embed.cc/embed/anime/${aId}/${epNum}`
+    });
+  }
+  if (mId) {
+    sources.push({
+      name: 'VidSrc (MAL)',
+      provider: 'vidsrc-mal',
+      type: 'embed',
+      url: makeProxy(`https://vidsrc.pm/embed/anime?mal=${mId}&episode=${epNum}`),
+      directUrl: `https://vidsrc.pm/embed/anime?mal=${mId}&episode=${epNum}`
+    });
+  }
 
-        if (s.type === 'hls') {
-          seenUrls.add(s.url);
-          let baseName = s.server || (resItem.provider === 'anikoto' ? 'Megaplay' : resItem.provider.toUpperCase());
-          let count = sources.filter(src => src.name.startsWith(baseName)).length;
-          let sName = count === 0 ? `${baseName} (HLS)` : `${baseName} ${count + 1} (HLS)`;
-          sources.push({
-            name: sName,
-            provider: resItem.provider,
-            type: 'hls',
-            url: s.url,
-            proxy: true,
-            referer: s.referer || (resItem.provider === 'anikoto' ? 'https://megaplay.buzz/' : s.url),
-          });
-        } else if (s.type === 'direct' || s.url.includes('.mp4')) {
+  // 2. Fetch HLS streams as secondary direct options
+  if (aId) {
+    try {
+      const providerResults = await fetchProviderStreams(aId, epNum, audioMode);
+      for (const resItem of providerResults) {
+        for (const s of (resItem.streams || [])) {
+          if (!s.url || seenUrls.has(s.url)) continue;
+          if (s.server && s.server.toLowerCase().includes('vidwish')) continue;
           seenUrls.add(s.url);
           let baseName = s.server || resItem.provider.toUpperCase();
-          let count = sources.filter(src => src.name.startsWith(baseName)).length;
-          let sName = count === 0 ? `${baseName} (Direct)` : `${baseName} ${count + 1} (Direct)`;
           sources.push({
-            name: sName,
+            name: `${baseName} (Stream)`,
             provider: resItem.provider,
-            type: 'direct',
+            type: s.type || 'hls',
             url: s.url,
             proxy: false,
+            referer: s.referer || s.url
           });
         }
       }
-
-      // Collect subtitles (VTT) if not already collected
-      if (subtitles.length === 0 && Array.isArray(resItem.subtitles)) {
-        for (const sub of resItem.subtitles) {
-          if (sub.file) {
-            const subRef = resItem.provider === 'anikoto' ? 'https://megaplay.buzz/' : (sub.referer || '');
-            subtitles.push({
-              label: sub.label || 'English',
-              language: sub.language || 'en',
-              url: `/api/proxy?url=${encodeURIComponent(sub.file)}&referer=${encodeURIComponent(subRef)}`,
-              default: !!sub.default,
-            });
-          }
-        }
-      }
-    }
-  }
-
-  // 2. Backup Embed Providers (Only if no direct HLS stream was found)
-  if (sources.length === 0) {
-    if (aId) {
-      sources.push({
-        name: 'VidSrc (AL)',
-        provider: 'vidsrc',
-        type: 'embed',
-        url: makeProxy(`https://vidsrc.pm/embed/anime?anilist=${aId}&episode=${epNum}`),
-        directUrl: `https://vidsrc.pm/embed/anime?anilist=${aId}&episode=${epNum}`,
-      });
-    }
-
-    if (mId) {
-      sources.push({
-        name: 'VidSrc (MAL)',
-        provider: 'vidsrc-mal',
-        type: 'embed',
-        url: makeProxy(`https://vidsrc.pm/embed/anime?mal=${mId}&episode=${epNum}`),
-        directUrl: `https://vidsrc.pm/embed/anime?mal=${mId}&episode=${epNum}`,
-      });
-    }
+    } catch {}
   }
 
   if (sources.length === 0) {
-    return res.status(404).json({ error: 'No stream sources found for this episode.' });
+    return res.status(404).json({ error: 'No stream sources found.' });
   }
 
   const responsePayload = { sources, episode: epNum, mode: audioMode, subtitles };
@@ -581,6 +554,10 @@ app.post('/api/pipeline/stop', async (req, res) => {
 });
 
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => {
-  console.log(`🎌 Animo engine → http://localhost:${PORT}`);
-});
+if (process.env.NODE_ENV !== 'test' && !process.env.VERCEL) {
+  app.listen(PORT, () => {
+    console.log(`🎌 Animo engine → http://localhost:${PORT}`);
+  });
+}
+
+export default app;
