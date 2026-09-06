@@ -12,7 +12,11 @@ const __dirname = path.dirname(__filename);
 const app = express();
 app.use(cors({ origin: '*' }));
 app.use(express.json());
-app.use(express.static('public'));
+app.use(express.static(path.join(__dirname, 'public')));
+
+app.get('/', (req, res) => {
+  res.sendFile(path.join(__dirname, 'public', 'index.html'));
+});
 import { config } from './pipeline/config.js';
 import { initDb, getEpisode, listEpisodes } from './pipeline/db.js';
 app.use('/hls', express.static(config.upload.localRoot));
