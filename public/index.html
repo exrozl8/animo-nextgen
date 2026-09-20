@@ -1612,6 +1612,16 @@
         <div class="sec-title">📋 Continue Watching</div>
       </div>
       <div class="carousel" id="continue-carousel"></div>
+
+      <div class="sec-hdr" style="margin-top:24px;">
+        <div class="sec-title">📅 Upcoming Next Episodes (Next 7 Days)</div>
+      </div>
+      <div class="sched-list" id="home-sched-list" style="margin-bottom:20px;"></div>
+
+      <div class="sec-hdr">
+        <div class="sec-title">📰 Latest Anime Releases & News</div>
+      </div>
+      <div class="news-grid" id="home-news-grid" style="margin-bottom:30px;"></div>
     </div>
 
     <div class="main" id="main-search" style="display:none">
@@ -1997,17 +2007,37 @@
       if (accs[u.username]) accs[u.username].watchlist = wl;
       localStorage.setItem('animo_accounts', JSON.stringify(accs));
       showToast(`Added to watchlist: ${getTitle(currentAnime)}`);
+      api('/api/schedule').then(sd => checkNewNotifs(sd.schedule || [])).catch(() => {});
     }
 
     /* ═══════════════════════════════════════════ NOTIFICATIONS */
+    function getWatchlistIds() {
+      const u = getUser();
+      if (!u) return [];
+      const accs = JSON.parse(localStorage.getItem('animo_accounts') || '{}');
+      const wl = accs[u.username]?.watchlist || [];
+      return wl.map(w => `${w.id}`);
+    }
+
     function getNotifs() { return JSON.parse(localStorage.getItem('animo_notifs') || '[]') }
     function saveNotifs(arr) { localStorage.setItem('animo_notifs', JSON.stringify(arr)) }
     function checkNewNotifs(schedule) {
+      const u = getUser();
       const existing = getNotifs().map(n => n.id);
       const newNotifs = [];
       const now = Date.now() / 1000;
+      const wlIds = getWatchlistIds();
+
       schedule.forEach(item => {
         const id = `${item.id}`;
+        const animeId = `${item.media?.id || ''}`;
+        const malId = `${item.media?.idMal || ''}`;
+
+        // If user is logged in, ONLY notify for anime on their watchlist!
+        if (u && !wlIds.includes(animeId) && !wlIds.includes(malId)) {
+          return;
+        }
+
         if (!existing.includes(id) && item.airingAt > now) {
           const hrs = Math.round((item.airingAt - now) / 3600);
           newNotifs.push({
@@ -2029,7 +2059,12 @@
     }
     function renderNotifs(arr) {
       const body = document.getElementById('notif-body');
-      if (!arr || !arr.length) { body.innerHTML = '<div class="empty"><p>No notifications yet.</p></div>'; return; }
+      const u = getUser();
+      if (!u) {
+        body.innerHTML = '<div class="empty"><p>Sign in and add anime to your Watchlist to get episode notifications!</p></div>';
+        return;
+      }
+      if (!arr || !arr.length) { body.innerHTML = '<div class="empty"><p>No notifications for your watchlist yet.</p><p style="font-size:12px;margin-top:6px">Add upcoming anime to your Watchlist to get alerts here!</p></div>'; return; }
       body.innerHTML = '';
       arr.forEach(n => {
         const div = document.createElement('div');
@@ -2151,35 +2186,70 @@
     }
 
     /* ═══════════════════════════════════════════ NEWS */
+    function renderNewsCards(containerId, items) {
+      const grid = document.getElementById(containerId);
+      if (!grid) return;
+      grid.innerHTML = '';
+      items.forEach(a => {
+        const card = document.createElement('div'); card.className = 'news-card';
+        const next = a.nextAiringEpisode;
+        const epMsg = next ? `Ep ${next.episode} airing ${fmt(next.airingAt)}` : (a.episodes ? `${a.episodes} episodes` : 'Ongoing');
+        const desc = (a.description || '').replace(/<[^>]+>/g, '').slice(0, 120);
+        card.innerHTML = `
+      <img class="news-thumb" src="${a.coverImage?.large || ''}" alt="" onerror="this.style.display='none'">
+      <div class="news-body">
+        <div class="news-title">${a.title?.english || a.title?.romaji || '—'}</div>
+        <div class="news-ep">📺 ${epMsg}</div>
+        <div class="news-desc">${desc}</div>
+        <div class="news-time">Score: ${a.averageScore ? (a.averageScore / 10).toFixed(1) : '—'} · ${a.seasonYear || ''}</div>
+      </div>
+    `;
+        card.onclick = () => { goHome(); const fake = { id: a.id, idMal: a.idMal, title: a.title, coverImage: a.coverImage, bannerImage: a.bannerImage, episodes: a.episodes, status: a.status, averageScore: a.averageScore, genres: a.genres, description: a.description, season: a.season, seasonYear: a.seasonYear, format: a.format }; selectAnime(fake); };
+        grid.appendChild(card);
+      });
+    }
+
     async function showNews() {
       setSection('main-news');
       const grid = document.getElementById('news-grid');
       grid.innerHTML = '<div style="padding:20px;color:var(--muted)">Loading news…</div>';
       try {
         const d = await api('/api/news');
-        const items = d.news || [];
-        grid.innerHTML = '';
-        items.forEach(a => {
-          const card = document.createElement('div'); card.className = 'news-card';
-          const next = a.nextAiringEpisode;
-          const epMsg = next ? `Ep ${next.episode} airing ${fmt(next.airingAt)}` : (a.episodes ? `${a.episodes} episodes` : 'Ongoing');
-          const desc = (a.description || '').replace(/<[^>]+>/g, '').slice(0, 120);
-          card.innerHTML = `
-        <img class="news-thumb" src="${a.coverImage?.large || ''}" alt="" onerror="this.style.display='none'">
-        <div class="news-body">
-          <div class="news-title">${a.title?.english || a.title?.romaji || '—'}</div>
-          <div class="news-ep">📺 ${epMsg}</div>
-          <div class="news-desc">${desc}</div>
-          <div class="news-time">Score: ${a.averageScore ? (a.averageScore / 10).toFixed(1) : '—'} · ${a.seasonYear || ''}</div>
-        </div>
-      `;
-          card.onclick = () => { goHome(); const fake = { id: a.id, idMal: a.idMal, title: a.title, coverImage: a.coverImage, bannerImage: a.bannerImage, episodes: a.episodes, status: a.status, averageScore: a.averageScore, genres: a.genres, description: a.description, season: a.season, seasonYear: a.seasonYear, format: a.format }; selectAnime(fake); };
-          grid.appendChild(card);
-        });
+        renderNewsCards('news-grid', d.news || []);
       } catch (e) { grid.innerHTML = `<div class="empty"><h3>Failed to load news</h3><p>${e.message}</p></div>`; }
     }
 
     /* ═══════════════════════════════════════════ SCHEDULE */
+    function renderScheduleItems(containerId, items, limit = null) {
+      const list = document.getElementById(containerId);
+      if (!list) return;
+      list.innerHTML = '';
+      const listItems = limit ? items.slice(0, limit) : items;
+      if (!listItems.length) { list.innerHTML = '<div class="empty"><h3>No upcoming episodes found</h3></div>'; return; }
+      listItems.forEach(item => {
+        const div = document.createElement('div'); div.className = 'sched-item';
+        const t = item.media?.title; const title = t?.english || t?.romaji || 'Unknown';
+        const thumb = item.media?.coverImage?.large || '';
+        div.innerHTML = `
+      <img class="sched-thumb" src="${thumb}" alt="" onerror="this.style.display='none'">
+      <div class="sched-info">
+        <div class="sched-title">${title}</div>
+        <div class="sched-ep">Episode ${item.episode}</div>
+      </div>
+      <div class="sched-time">
+        <div class="sched-date">${timeLeft(item.airingAt)}</div>
+        <div class="sched-rel">${fmt(item.airingAt)}</div>
+      </div>
+    `;
+        div.onclick = () => {
+          goHome();
+          const fake = { id: item.media?.id, idMal: item.media?.idMal, title: item.media?.title, coverImage: item.media?.coverImage };
+          selectAnime(fake);
+        };
+        list.appendChild(div);
+      });
+    }
+
     async function showSchedule() {
       setSection('main-schedule');
       const list = document.getElementById('sched-list');
@@ -2187,31 +2257,8 @@
       try {
         const d = await api('/api/schedule');
         const items = d.schedule || [];
-        list.innerHTML = '';
-        checkNewNotifs(items); // also update notifications
-        if (!items.length) { list.innerHTML = '<div class="empty"><h3>No upcoming episodes found</h3></div>'; return; }
-        items.forEach(item => {
-          const div = document.createElement('div'); div.className = 'sched-item';
-          const t = item.media?.title; const title = t?.english || t?.romaji || 'Unknown';
-          const thumb = item.media?.coverImage?.large || '';
-          div.innerHTML = `
-        <img class="sched-thumb" src="${thumb}" alt="" onerror="this.style.display='none'">
-        <div class="sched-info">
-          <div class="sched-title">${title}</div>
-          <div class="sched-ep">Episode ${item.episode}</div>
-        </div>
-        <div class="sched-time">
-          <div class="sched-date">${timeLeft(item.airingAt)}</div>
-          <div class="sched-rel">${fmt(item.airingAt)}</div>
-        </div>
-      `;
-          div.onclick = () => {
-            goHome();
-            const fake = { id: item.media?.id, idMal: item.media?.idMal, title: item.media?.title, coverImage: item.media?.coverImage };
-            selectAnime(fake);
-          };
-          list.appendChild(div);
-        });
+        renderScheduleItems('sched-list', items);
+        checkNewNotifs(items); // update notifications
       } catch (e) { list.innerHTML = `<div class="empty"><h3>Failed to load schedule</h3></div>`; }
     }
 
@@ -2530,10 +2577,18 @@
         renderCarousel('seasonal-carousel', d.media || []);
       }
 
-      // silently fetch schedule for background notifications
+      // Fetch schedule for homepage preview + notifications
       try {
         const sd = await api('/api/schedule');
-        checkNewNotifs(sd.schedule || []);
+        const schedItems = sd.schedule || [];
+        renderScheduleItems('home-sched-list', schedItems, 6);
+        checkNewNotifs(schedItems);
+      } catch { }
+
+      // Fetch news for homepage preview
+      try {
+        const nd = await api('/api/news');
+        renderNewsCards('home-news-grid', (nd.news || []).slice(0, 6));
       } catch { }
 
       // Initialize ad manager
