@@ -1796,8 +1796,10 @@
             <div class="ep-side-title">Episodes</div>
             <div class="ep-total" id="ep-total">—</div>
           </div>
-          <div class="ep-search">
-            <input type="number" placeholder="Go to ep #" min="1" onchange="jumpEp(this.value)">
+          <div class="ep-search" style="display:flex;gap:6px;align-items:center;">
+            <select id="ep-range-select" onchange="filterEpRange(this.value)" style="background:var(--surface);border:1px solid var(--border);border-radius:7px;padding:6px 8px;color:var(--text);font-family:'Outfit',sans-serif;font-size:11px;outline:none;display:none;width:110px;cursor:pointer;">
+            </select>
+            <input id="ep-search-input" type="number" placeholder="Ep #" min="1" oninput="jumpEp(this.value)" style="flex:1;">
           </div>
           <div class="ep-grid" id="ep-grid"></div>
 
@@ -2297,43 +2299,140 @@
     }
 
     /* ═══════════════════════════════════════════ PLAYER */
-    function openPlayer(ep) {
+    let currentEpRange = 0; // 0 = 1-100, 1 = 101-200, etc.
+
+    function getAnimeTotalEps(anime) {
+      if (anime?.episodes && anime.episodes > 0) return anime.episodes;
+      if (anime?.nextAiringEpisode?.episode) return Math.max(1, anime.nextAiringEpisode.episode - 1);
+      return 24; // clean fallback
+    }
+
+    async function openPlayer(ep) {
       if (!currentAnime) { showToast('Select an anime first!'); return; }
       currentEp = ep || 1;
       document.getElementById('player-modal').style.display = 'block';
       document.body.style.overflow = 'hidden';
       document.getElementById('modal-title').textContent = getTitle(currentAnime);
       document.getElementById('watch-lbl').textContent = `${getTitle(currentAnime)} Ep ${currentEp}`;
-      document.getElementById('ep-total').textContent = `${currentAnime.episodes || '?'} total`;
-      buildEpGrid(); loadStream();
+
+      // Calculate total episodes
+      let total = getAnimeTotalEps(currentAnime);
+      document.getElementById('ep-total').textContent = `${total} total`;
+
+      // If current anime object lacked episode details, fetch fresh details from /api/anime/:id
+      if ((!currentAnime.episodes || currentAnime.episodes <= 24) && currentAnime.id) {
+        api(`/api/anime/${currentAnime.id}`).then(fullData => {
+          if (fullData) {
+            currentAnime = { ...currentAnime, ...fullData };
+            const updatedTotal = getAnimeTotalEps(currentAnime);
+            document.getElementById('ep-total').textContent = `${updatedTotal} total`;
+            buildEpGrid();
+          }
+        }).catch(() => {});
+      }
+
+      buildEpGrid();
+      loadStream();
     }
 
     function buildEpGrid() {
-      const g = document.getElementById('ep-grid'); g.innerHTML = '';
-      const total = currentAnime?.episodes || 24;
-      const cap = Math.min(total, 500);
+      const g = document.getElementById('ep-grid');
+      const rangeSel = document.getElementById('ep-range-select');
+      g.innerHTML = '';
+      const total = getAnimeTotalEps(currentAnime);
       const animeId = currentAnime?.id || currentAnime?.idMal;
-      for (let i = 1; i <= cap; i++) {
+      const isLast = getWatchedEps(animeId);
+
+      // If total > 50, setup range pagination dropdown (e.g. 1-100, 101-200...)
+      if (total > 50) {
+        rangeSel.style.display = 'block';
+        rangeSel.innerHTML = '';
+        const step = 100;
+        const rangesCount = Math.ceil(total / step);
+
+        // Make sure currentEp is in the selected range
+        currentEpRange = Math.floor((currentEp - 1) / step);
+
+        for (let r = 0; r < rangesCount; r++) {
+          const start = r * step + 1;
+          const end = Math.min((r + 1) * step, total);
+          const opt = document.createElement('option');
+          opt.value = r;
+          opt.textContent = `${start} - ${end}`;
+          if (r === currentEpRange) opt.selected = true;
+          rangeSel.appendChild(opt);
+        }
+
+        const startEp = currentEpRange * step + 1;
+        const endEp = Math.min((currentEpRange + 1) * step, total);
+        for (let i = startEp; i <= endEp; i++) {
+          const b = document.createElement('button');
+          b.className = 'ep-btn' + (i === currentEp ? ' active' : '') + (i <= (isLast || 0) && i !== currentEp ? ' watched' : '');
+          b.textContent = i;
+          b.onclick = () => switchEp(i);
+          g.appendChild(b);
+        }
+      } else {
+        rangeSel.style.display = 'none';
+        for (let i = 1; i <= total; i++) {
+          const b = document.createElement('button');
+          b.className = 'ep-btn' + (i === currentEp ? ' active' : '') + (i <= (isLast || 0) && i !== currentEp ? ' watched' : '');
+          b.textContent = i;
+          b.onclick = () => switchEp(i);
+          g.appendChild(b);
+        }
+      }
+    }
+
+    function filterEpRange(rangeIdx) {
+      currentEpRange = parseInt(rangeIdx, 10);
+      const g = document.getElementById('ep-grid');
+      g.innerHTML = '';
+      const total = getAnimeTotalEps(currentAnime);
+      const animeId = currentAnime?.id || currentAnime?.idMal;
+      const isLast = getWatchedEps(animeId);
+      const step = 100;
+      const startEp = currentEpRange * step + 1;
+      const endEp = Math.min((currentEpRange + 1) * step, total);
+
+      for (let i = startEp; i <= endEp; i++) {
         const b = document.createElement('button');
-        const isLast = getWatchedEps(animeId);
         b.className = 'ep-btn' + (i === currentEp ? ' active' : '') + (i <= (isLast || 0) && i !== currentEp ? ' watched' : '');
-        b.textContent = i; b.onclick = () => switchEp(i);
+        b.textContent = i;
+        b.onclick = () => switchEp(i);
         g.appendChild(b);
       }
     }
 
-    function jumpEp(v) { const n = parseInt(v); if (n > 0) switchEp(n); }
+    function jumpEp(v) {
+      const n = parseInt(v, 10);
+      if (n > 0) {
+        switchEp(n);
+        const step = 100;
+        const targetRange = Math.floor((n - 1) / step);
+        if (targetRange !== currentEpRange) {
+          const rangeSel = document.getElementById('ep-range-select');
+          if (rangeSel) rangeSel.value = targetRange;
+          filterEpRange(targetRange);
+        }
+      }
+    }
 
     function switchEp(n) {
       currentEp = n;
       document.getElementById('modal-ep').textContent = `Episode ${n} · ${currentAudio.toUpperCase()}`;
       document.getElementById('watch-lbl').textContent = `${getTitle(currentAnime)} Ep ${n}`;
-      document.querySelectorAll('.ep-btn').forEach((b, i) => b.classList.toggle('active', i + 1 === n));
+      document.querySelectorAll('.ep-btn').forEach(b => {
+        b.classList.toggle('active', parseInt(b.textContent, 10) === n);
+      });
       if (window.AdManager && AdManager.triggerPop) AdManager.triggerPop();
       loadStream();
     }
     function prevEp() { if (currentEp > 1) switchEp(currentEp - 1); }
-    function nextEp() { const max = currentAnime?.episodes || 999; if (currentEp < max) switchEp(currentEp + 1); }
+    function nextEp() {
+      const max = getAnimeTotalEps(currentAnime);
+      if (currentEp < max) switchEp(currentEp + 1);
+    }
 
     async function loadStream() {
       showOv('Resolving stream sources…');
