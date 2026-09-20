@@ -302,7 +302,7 @@ app.get('/api/stream', async (req, res) => {
   const seenUrls = new Set();
   const makeProxy = (rawUrl) => `/api/embed-proxy?url=${encodeURIComponent(rawUrl)}`;
 
-  // 1. Fetch clean HLS streams first (Best user experience, custom UI, native quality switcher, subtitles)
+  // 1. Fetch clean HLS streams & provider streams
   if (aId) {
     try {
       const providerResults = await fetchProviderStreams(aId, epNum, audioMode);
@@ -311,16 +311,37 @@ app.get('/api/stream', async (req, res) => {
           if (!s.url || seenUrls.has(s.url)) continue;
           if (s.server && s.server.toLowerCase().includes('vidwish')) continue;
           seenUrls.add(s.url);
-          let baseName = s.server || (resItem.provider === 'anikoto' ? 'Megaplay' : resItem.provider.toUpperCase());
+
+          const isMegaplay = (s.url && s.url.includes('megaplay.buzz')) ||
+                             (s.server && s.server.toLowerCase().includes('megaplay')) ||
+                             resItem.provider === 'anikoto';
+          const isEmbed = s.type === 'embed' || isMegaplay || (!s.url.includes('.m3u8') && s.type !== 'hls');
+
+          let baseName = s.server || (isMegaplay ? 'MegaPlay' : resItem.provider.toUpperCase());
+          baseName = baseName.replace(/-embed$/i, '').replace(/beta/i, '').trim();
+
+          if (isMegaplay) {
+            if (!baseName.toLowerCase().includes('megaplay')) {
+              baseName = `MegaPlay (${baseName})`;
+            } else {
+              baseName = 'MegaPlay HD';
+            }
+          }
+
           let count = sources.filter(src => src.name.startsWith(baseName)).length;
-          let sName = count === 0 ? `${baseName} (HLS)` : `${baseName} ${count + 1} (HLS)`;
+          let sName = count === 0 ? baseName : `${baseName} ${count + 1}`;
+          if (!isEmbed) {
+            sName += ' (HLS)';
+          }
+
           sources.push({
             name: sName,
-            provider: resItem.provider,
-            type: s.type || 'hls',
-            url: s.url,
-            proxy: true,
-            referer: s.referer || (resItem.provider === 'anikoto' ? 'https://megaplay.buzz/' : s.url)
+            provider: isMegaplay ? 'megaplay' : resItem.provider,
+            type: isEmbed ? 'embed' : (s.type || 'hls'),
+            url: isEmbed ? makeProxy(s.url) : s.url,
+            directUrl: s.url,
+            proxy: !isEmbed,
+            referer: s.referer || (isMegaplay ? 'https://megaplay.buzz/' : s.url)
           });
         }
 
@@ -342,7 +363,27 @@ app.get('/api/stream', async (req, res) => {
     } catch {}
   }
 
-  // 2. Backup Direct Embed Servers
+  // 2. Guaranteed MegaPlay Stream for every anime/episode
+  if (aId) {
+    const hasMegaplay = sources.some(s =>
+      s.provider === 'megaplay' ||
+      s.name.toLowerCase().includes('megaplay') ||
+      (s.url && s.url.includes('megaplay.buzz')) ||
+      (s.directUrl && s.directUrl.includes('megaplay.buzz'))
+    );
+    if (!hasMegaplay) {
+      const megaDirect = `https://megaplay.buzz/stream/ani/${aId}/${epNum}/${audioMode}?autostart=true`;
+      sources.push({
+        name: 'MegaPlay HD',
+        provider: 'megaplay',
+        type: 'embed',
+        url: makeProxy(megaDirect),
+        directUrl: megaDirect
+      });
+    }
+  }
+
+  // 3. Backup Direct Embed Servers
   if (aId) {
     sources.push({
       name: 'VidSrc HD',
@@ -415,6 +456,9 @@ app.get('/api/embed-proxy', async (req, res) => {
       .replace(/(src|href|action)=(['"])\//gi, `$1=$2${originBase}/`)
       .replace(/url\(\//gi, `url(${originBase}/`);
 
+    // Inject base tag if not present
+    const baseTag = rewritten.includes('<base ') ? '' : `<base href="${originBase}/">`;
+
     // Neutralize popup scripts and redirect hijackers
     const antiAdScript = `<script>
       window.open = function() { return null; };
@@ -423,9 +467,9 @@ app.get('/api/embed-proxy', async (req, res) => {
     </script>`;
 
     if (rewritten.includes('<head>')) {
-      rewritten = rewritten.replace('<head>', '<head>' + antiAdScript);
+      rewritten = rewritten.replace('<head>', '<head>' + baseTag + antiAdScript);
     } else {
-      rewritten = antiAdScript + rewritten;
+      rewritten = baseTag + antiAdScript + rewritten;
     }
 
     res.send(rewritten);

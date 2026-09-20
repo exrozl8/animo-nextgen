@@ -2514,13 +2514,19 @@
             showOv(`All servers failed.\n\nTry again later.`);
           }
         };
-        const timeout = setTimeout(() => tryNext(), 10000);
+        const timeout = setTimeout(() => tryNext(), 12000);
         ifr.onload = () => {
           clearTimeout(timeout);
           try {
             const doc = ifr.contentDocument || ifr.contentWindow?.document;
             const txt = doc?.body?.innerText || '';
-            if (txt.includes('Provider Unavailable') || txt.includes('Upstream error') || txt.includes('Server error')) {
+            if (
+              txt.includes('Provider Unavailable') ||
+              txt.includes('Upstream error') ||
+              txt.includes('Server error') ||
+              txt.includes("We can't find the file") ||
+              txt.includes('Error - MegaPlay')
+            ) {
               tryNext();
               return;
             }
@@ -2568,7 +2574,16 @@
             v.play().catch(() => { });
             buildQualityBtns();
           });
-          hlsInst.on(Hls.Events.ERROR, (_, d) => { if (d.fatal) showOv('Stream error. Try another server.'); });
+          hlsInst.on(Hls.Events.ERROR, (_, d) => {
+            if (d.fatal) {
+              if (i + 1 < streamSrcs.length) {
+                showOv(`${src.name} stream error. Trying ${streamSrcs[i + 1].name}…`);
+                setTimeout(() => switchSrv(i + 1), 1200);
+              } else {
+                showOv('Stream error. Try another server.');
+              }
+            }
+          });
         } else if (v.canPlayType('application/vnd.apple.mpegurl')) {
           v.src = hlsUrl;
           v.addEventListener('canplay', () => { hideOv(); v.play().catch(() => { }); }, { once: true });
