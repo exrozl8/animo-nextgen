@@ -323,8 +323,14 @@ app.get('/api/stream', async (req, res) => {
           const isHls = s.type === 'hls' || s.url.includes('.m3u8');
 
           // Classify the stream
+          // MegaPlay has no X-Frame-Options → load DIRECTLY in iframe (no proxy)
+          // Proxying breaks MegaPlay because its JS needs browser-native cookies/session
           let streamType, streamUrl, streamProxy;
-          if (isMegaplay || isEmbedType) {
+          if (isMegaplay) {
+            streamType = 'embed';
+            streamUrl = s.url; // direct — no proxy needed
+            streamProxy = false;
+          } else if (isEmbedType) {
             streamType = 'embed';
             streamUrl = makeProxy(s.url);
             streamProxy = false;
@@ -390,12 +396,13 @@ app.get('/api/stream', async (req, res) => {
       (s.directUrl && s.directUrl.includes('megaplay.buzz'))
     );
     if (!hasMegaplay) {
+      // MegaPlay has no X-Frame-Options — load directly, no proxy
       const megaDirect = `https://megaplay.buzz/stream/ani/${aId}/${epNum}/${audioMode}?autostart=true`;
       sources.push({
         name: 'MegaPlay HD',
         provider: 'megaplay',
         type: 'embed',
-        url: makeProxy(megaDirect),
+        url: megaDirect,
         directUrl: megaDirect
       });
     }

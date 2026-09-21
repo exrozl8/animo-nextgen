@@ -2514,25 +2514,26 @@
             showOv(`All servers failed.\n\nTry again later.`);
           }
         };
-        const timeout = setTimeout(() => tryNext(), 12000);
+        const timeout = setTimeout(() => tryNext(), 15000);
         ifr.onload = () => {
           clearTimeout(timeout);
           try {
+            // Only readable for same-origin proxied embeds; cross-origin (MegaPlay direct) throws — that's fine
             const doc = ifr.contentDocument || ifr.contentWindow?.document;
             const txt = doc?.body?.innerText || '';
             if (
               txt.includes('Provider Unavailable') ||
               txt.includes('Upstream error') ||
               txt.includes('Server error') ||
-              txt.includes("We can't find the file") ||
-              txt.includes('Error - MegaPlay')
+              txt.includes("We can't find the file")
             ) {
               tryNext();
               return;
             }
-          } catch { }
+          } catch { /* cross-origin iframe — normal, player loaded fine */ }
           hideOv();
         };
+        ifr.onerror = () => tryNext();
         ifr.src = src.url;
       } else if (src.type === 'hls') {
         showOv('Buffering HLS stream…');
