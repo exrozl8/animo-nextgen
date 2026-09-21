@@ -5,6 +5,8 @@ import { fileURLToPath } from 'url';
 import fetch from 'node-fetch';
 import http from 'http';
 import https from 'https';
+import { config } from './pipeline/config.js';
+import { initDb, getEpisode, listEpisodes } from './pipeline/db.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -13,14 +15,13 @@ const app = express();
 app.use(cors({ origin: '*' }));
 app.use(express.json());
 app.use(express.static(path.join(__dirname, 'public')));
+app.use('/hls', express.static(config.upload.localRoot));
+
+let dbReady = initDb().catch((e) => console.error('db init failed:', e));
 
 app.get('/', (req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'index.html'));
 });
-import { config } from './pipeline/config.js';
-import { initDb, getEpisode, listEpisodes } from './pipeline/db.js';
-app.use('/hls', express.static(config.upload.localRoot));
-let dbReady = initDb().catch((e) => console.error('db init failed:', e));
 
 async function ensureDb() {
   try { await dbReady; } catch {}
@@ -235,9 +236,17 @@ app.get('/api/ads/config', (req, res) => {
 });
 
 // ─── 8. Stream sources ────────────────────────────────────────────────────────
-// All providers go through /api/embed-proxy which strips X-Frame-Options headers
-// ─── 8. Stream sources ────────────────────────────────────────────────────────
+// All providers go through /api/embed-proxy which strips X-Frame-Options headers.
+// HLS streams go through /api/proxy which rewrites playlists + handles CDN segments.
 const streamCache = new Map();
+
+// Evict stale cache entries every 10 minutes to prevent memory leaks
+setInterval(() => {
+  const now = Date.now();
+  for (const [key, val] of streamCache.entries()) {
+    if (now - val.timestamp > 5 * 60 * 1000) streamCache.delete(key);
+  }
+}, 10 * 60 * 1000).unref();
 
 async function resolveAnilistId(mId) {
   if (!mId) return null;
@@ -316,6 +325,9 @@ app.get('/api/stream', async (req, res) => {
                              (s.server && s.server.toLowerCase().includes('megaplay')) ||
                              resItem.provider === 'anikoto';
           const isEmbed = s.type === 'embed' || isMegaplay || (!s.url.includes('.m3u8') && s.type !== 'hls');
+          // needsProxy: HLS sources from external CDNs require /api/proxy to bypass CORS.
+          // Embed sources are already wrapped via /api/embed-proxy in makeProxy().
+          const needsProxy = !isEmbed && s.url && !s.url.startsWith('/');
 
           let baseName = s.server || (isMegaplay ? 'MegaPlay' : resItem.provider.toUpperCase());
           baseName = baseName.replace(/-embed$/i, '').replace(/beta/i, '').trim();
@@ -340,7 +352,7 @@ app.get('/api/stream', async (req, res) => {
             type: isEmbed ? 'embed' : (s.type || 'hls'),
             url: isEmbed ? makeProxy(s.url) : s.url,
             directUrl: s.url,
-            proxy: !isEmbed,
+            needsProxy,
             referer: s.referer || (isMegaplay ? 'https://megaplay.buzz/' : s.url)
           });
         }
@@ -541,6 +553,53 @@ app.get('/api/proxy', async (req, res) => {
   }
 });
 
+// ─── 10b. CDN Edge Probe — reveals edge server metadata for a segment URL ─────
+// Based on the tyrionx.top / nexabloom CDN pattern:
+// Segment URLs use disguised .js extensions but serve video data.
+// This endpoint does a HEAD request and returns cache/origin headers.
+app.get('/api/cdn-probe', async (req, res) => {
+  const { url } = req.query;
+  if (!url) return res.status(400).json({ error: 'url required' });
+  const target = decodeURIComponent(url);
+  let parsedUrl;
+  try { parsedUrl = new URL(target); } catch { return res.status(400).json({ error: 'invalid url' }); }
+  try {
+    const upstream = await fetch(target, {
+      method: 'HEAD',
+      headers: {
+        ...BROWSER_HEADERS,
+        Referer: parsedUrl.origin + '/',
+        Origin: parsedUrl.origin,
+      },
+      redirect: 'follow',
+    });
+    const hdrs = upstream.headers;
+    res.json({
+      status: upstream.status,
+      url: upstream.url, // final URL after redirects
+      host: parsedUrl.hostname,
+      cdnInfo: {
+        server: hdrs.get('server') || null,
+        via: hdrs.get('via') || null,
+        xCache: hdrs.get('x-cache') || hdrs.get('x-cache-status') || null,
+        xServedBy: hdrs.get('x-served-by') || null,
+        cfRay: hdrs.get('cf-ray') || null,
+        ageSeconds: hdrs.get('age') || null,
+        cacheControl: hdrs.get('cache-control') || null,
+        contentType: hdrs.get('content-type') || null,
+        accessControlAllowOrigin: hdrs.get('access-control-allow-origin') || null,
+        xEdgeLocation: hdrs.get('x-edge-location') || hdrs.get('x-amz-cf-pop') || null,
+      },
+      // Note: Remote Address (IP/ASN) is only available in browser DevTools.
+      // To see the real origin IP, check the Headers > General > Remote Address
+      // in the Network tab for this segment request.
+      tip: 'Check DevTools > Network > Headers > General > Remote Address for the real edge server IP.'
+    });
+  } catch (e) {
+    res.status(502).json({ error: e.message });
+  }
+});
+
 // ─── 11. Processed episodes (pipeline DB) ────────────────────────────────────
 // Returns the locally-transcoded HLS stream_url for a given anime + episode.
 app.get('/api/episode/:mal_id/:ep', async (req, res) => {
@@ -584,7 +643,10 @@ app.get('/api/pipeline/episodes/:mal_id', async (req, res) => {
 // ─── 12. Pipeline control (optional, disabled unless ENABLE_PIPELINE=true) ───
 const AUTH_TOKEN = process.env.PIPELINE_TOKEN || null;
 function authOk(req) {
-  if (!AUTH_TOKEN) return false;
+  if (!AUTH_TOKEN) {
+    console.warn('[pipeline] PIPELINE_TOKEN is not set — pipeline HTTP control is disabled.');
+    return false;
+  }
   const h = req.headers.authorization || '';
   return h === `Bearer ${AUTH_TOKEN}` || req.query.token === AUTH_TOKEN;
 }

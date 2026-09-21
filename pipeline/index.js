@@ -66,7 +66,7 @@ export class Pipeline {
       for (const item of novel) {
         this.seen.add(item.guid);
         try {
-          const res = await this.processItem(item);
+          await this.processItem(item);
           this.status.processed++;
           this.status.lastItem = item.title;
         } catch (e) {

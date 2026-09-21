@@ -1769,6 +1769,7 @@
               <button class="tool-btn" onclick="toggleExpand()">⛶ Expand</button>
               <button class="tool-btn" onclick="prevEp()">⏮ Prev</button>
               <button class="tool-btn" onclick="nextEp()">Next ⏭</button>
+              <button class="tool-btn" id="cdn-probe-btn" onclick="probeCdn()" title="Reveal CDN edge server & cache info for current stream">🔍 Stream Info</button>
             </div>
           </div>
 
@@ -2320,7 +2321,7 @@
       document.getElementById('ep-total').textContent = `${total} total`;
 
       // If current anime object lacked episode details, fetch fresh details from /api/anime/:id
-      if ((!currentAnime.episodes || currentAnime.episodes <= 24) && currentAnime.id) {
+      if ((!currentAnime.episodes || currentAnime.episodes <= 0) && currentAnime.id) {
         api(`/api/anime/${currentAnime.id}`).then(fullData => {
           if (fullData) {
             currentAnime = { ...currentAnime, ...fullData };
@@ -2425,7 +2426,7 @@
       document.querySelectorAll('.ep-btn').forEach(b => {
         b.classList.toggle('active', parseInt(b.textContent, 10) === n);
       });
-      if (window.AdManager && AdManager.triggerPop) AdManager.triggerPop();
+      if (window.AdManager && typeof AdManager.triggerPop === 'function') AdManager.triggerPop();
       loadStream();
     }
     function prevEp() { if (currentEp > 1) switchEp(currentEp - 1); }
@@ -2493,7 +2494,7 @@
     async function switchSrv(i) {
       currentSrv = i;
       document.querySelectorAll('#srv-row .srv-btn').forEach((b, j) => b.classList.toggle('active', j === i));
-      if (window.AdManager && AdManager.triggerPop) AdManager.triggerPop();
+      if (window.AdManager && typeof AdManager.triggerPop === 'function') AdManager.triggerPop();
       await playSource(i);
     }
 
@@ -2564,7 +2565,9 @@
         const qRow = document.getElementById('quality-row');
         if (qRow) qRow.style.display = 'none';
 
-        const hlsUrl = src.proxy ? `/api/proxy?url=${encodeURIComponent(src.url)}&referer=${encodeURIComponent(src.referer || '')}` : src.url;
+        const hlsUrl = src.needsProxy
+          ? `/api/proxy?url=${encodeURIComponent(src.url)}&referer=${encodeURIComponent(src.referer || '')}`
+          : src.url;
         if (Hls.isSupported()) {
           hlsInst = new Hls({ enableWorker: true, lowLatencyMode: true });
           hlsInst.loadSource(hlsUrl);
@@ -2663,6 +2666,89 @@
       document.body.classList.remove('theater');
     }
     function toggleTheater() { document.body.classList.toggle('theater'); }
+
+    /* ═══════════════════════════════════════════ CDN EDGE PROBE */
+    async function probeCdn() {
+      const src = streamSrcs[currentSrv];
+      const targetUrl = src?.directUrl || src?.url;
+      if (!targetUrl || !targetUrl.startsWith('http')) {
+        showToast('No direct stream URL to probe.');
+        return;
+      }
+
+      const btn = document.getElementById('cdn-probe-btn');
+      if (btn) { btn.textContent = '⏳ Probing…'; btn.disabled = true; }
+
+      try {
+        const data = await api(`/api/cdn-probe?url=${encodeURIComponent(targetUrl)}`);
+        const c = data.cdnInfo || {};
+
+        // Detect CDN provider from headers
+        let cdnProvider = 'Unknown / Direct';
+        if (c.cfRay) cdnProvider = '☁️ Cloudflare';
+        else if (c.xEdgeLocation) cdnProvider = '⚡ Amazon CloudFront';
+        else if ((c.via || '').toLowerCase().includes('varnish')) cdnProvider = '🔷 Varnish Cache';
+        else if ((c.via || '').toLowerCase().includes('fastly')) cdnProvider = '🟠 Fastly';
+        else if ((c.server || '').toLowerCase().includes('nginx')) cdnProvider = '🟩 Nginx (Direct/Edge)';
+        else if ((c.server || '').toLowerCase().includes('caddy')) cdnProvider = '🟦 Caddy';
+
+        // Build info rows
+        const rows = [
+          ['Edge Host', data.host],
+          ['Final URL', data.url !== targetUrl ? `↪ ${data.url}` : '(no redirect)'],
+          ['CDN Provider', cdnProvider],
+          ['Server', c.server || '—'],
+          ['Via', c.via || '—'],
+          ['X-Cache', c.xCache || '—'],
+          ['X-Served-By', c.xServedBy || '—'],
+          ['CF-Ray', c.cfRay || '—'],
+          ['Edge Location', c.xEdgeLocation || '—'],
+          ['Cache-Control', c.cacheControl || '—'],
+          ['Age (cached)', c.ageSeconds != null ? `${c.ageSeconds}s` : '—'],
+          ['Content-Type', c.contentType || '—'],
+          ['CORS Origin', c.accessControlAllowOrigin || '—'],
+          ['HTTP Status', data.status],
+        ].filter(([, v]) => v && v !== '—');
+
+        // Show info as overlay on the player
+        const ov = document.getElementById('v-ov');
+        const ot = document.getElementById('ov-text');
+        ov.style.display = 'flex';
+        ov.style.alignItems = 'flex-start';
+        ov.style.overflowY = 'auto';
+        ov.style.padding = '16px';
+        ov.style.background = 'rgba(6,8,15,0.97)';
+        ov.innerHTML = `
+          <div style="width:100%;font-family:'Outfit',sans-serif;max-height:100%;overflow-y:auto;">
+            <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;">
+              <div style="font-size:15px;font-weight:800;color:var(--text);">🔍 CDN Edge Intelligence</div>
+              <button onclick="document.getElementById('v-ov').style.display='none'" style="background:var(--surface);border:1px solid var(--border);color:var(--muted);border-radius:6px;padding:4px 10px;cursor:pointer;font-family:'Outfit',sans-serif;font-size:12px;">✕ Close</button>
+            </div>
+            <div style="background:rgba(230,57,80,.1);border:1px solid rgba(230,57,80,.3);border-radius:8px;padding:10px 12px;margin-bottom:12px;font-size:12px;color:var(--accent);">
+              <b>Provider Detected:</b> ${cdnProvider}
+            </div>
+            <table style="width:100%;border-collapse:collapse;font-size:12px;">
+              ${rows.map(([k, v]) => `
+                <tr style="border-bottom:1px solid var(--border);">
+                  <td style="padding:7px 10px 7px 0;color:var(--muted);font-weight:600;white-space:nowrap;width:130px;">${k}</td>
+                  <td style="padding:7px 0;color:var(--text);word-break:break-all;">${v}</td>
+                </tr>`).join('')}
+            </table>
+            <div style="margin-top:14px;padding:10px 12px;background:rgba(96,165,250,.08);border:1px solid rgba(96,165,250,.2);border-radius:8px;font-size:11px;color:#93c5fd;line-height:1.6;">
+              <b>💡 Tip:</b> To find the real origin IP & ASN behind this CDN:<br>
+              Open DevTools → Network tab → click this segment request →<br>
+              <b>Headers → General → Remote Address</b><br>
+              That IP reveals whether the edge is Cloudflare, DigitalOcean, Hetzner, AWS, etc.
+            </div>
+          </div>
+        `;
+      } catch (e) {
+        showToast('CDN probe failed: ' + e.message);
+      } finally {
+        if (btn) { btn.textContent = '🔍 Stream Info'; btn.disabled = false; }
+      }
+    }
+
     function toggleExpand() {
       const pw = document.querySelector('.player-wrap');
       pw.style.maxWidth = pw.style.maxWidth === '100%' ? '1280px' : '100%';
